@@ -1,0 +1,129 @@
+# Digital Slide Archive (DSA) / HistomicsUI – docker-compose stack
+#
+# Usage (from inside the dev container or on the host):
+#   docker compose -f dsa/docker-compose.yml up -d
+#   docker compose -f dsa/docker-compose.yml down
+#
+# HistomicsUI will be available at http://localhost:8080
+# Default credentials: admin / password  (change DSA_ADMIN_PASSWORD below)
+
+version: "3.9"
+
+# ── Shared environment ────────────────────────────────────────────────────────
+x-dsa-env: &dsa-env
+    RABBITMQ_URL: "amqp://guest:guest@rabbitmq/"
+    MEMCACHED_URL: "memcached:11211"
+    MONGODB_URI: "mongodb://mongodb:27017/girder"
+    DSA_ADMIN_USER: "admin"
+    DSA_ADMIN_PASSWORD: "password"
+    DSA_ADMIN_EMAIL: "admin@example.com"
+    GIRDER_API_ROOT: "http://girder:8080/api/v1"
+
+# ── Services ──────────────────────────────────────────────────────────────────
+services:
+
+    # MongoDB — primary data store
+    mongodb:
+        image: mongo:6
+        restart: unless-stopped
+        volumes:
+            - mongodb_data:/data/db
+        networks:
+            - dsa_net
+        healthcheck:
+            test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+            interval: 10s
+            timeout: 5s
+            retries: 5
+
+    # Memcached — caching layer
+    memcached:
+        image: memcached:1.6-alpine
+        restart: unless-stopped
+        networks:
+            - dsa_net
+
+    # RabbitMQ — task queue for Celery workers
+    rabbitmq:
+        image: rabbitmq:3.12-management-alpine
+        restart: unless-stopped
+        networks:
+            - dsa_net
+        healthcheck:
+            test: ["CMD", "rabbitmq-diagnostics", "ping"]
+            interval: 15s
+            timeout: 5s
+            retries: 5
+
+    # Girder / DSA server — the core REST API + web UI
+    girder:
+        image: dsarchive/dsa_common:latest
+        restart: unless-stopped
+        command: >
+            bash -c "
+              girder build --dev 2>/dev/null || true;
+              girder serve --host 0.0.0.0
+            "
+        environment:
+            <<: *dsa-env
+        ports:
+            - "8080:8080"
+        volumes:
+            - dsa_assetstore:/assetstore
+        depends_on:
+            mongodb:
+                condition: service_healthy
+            memcached:
+                condition: service_started
+            rabbitmq:
+                condition: service_healthy
+        networks:
+            - dsa_net
+        healthcheck:
+            test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/system/version"]
+            interval: 15s
+            timeout: 10s
+            retries: 10
+            start_period: 60s
+
+    # Celery worker — runs image-processing jobs (tile generation, etc.)
+    worker:
+        image: dsarchive/dsa_worker:latest
+        restart: unless-stopped
+        environment:
+            <<: *dsa-env
+        volumes:
+            - dsa_assetstore:/assetstore
+            # Allow the worker to call back into the Docker daemon for
+            # slicer_cli_web tasks that spin up plugin containers.
+            - /var/run/docker.sock:/var/run/docker.sock
+        depends_on:
+            - rabbitmq
+            - girder
+        networks:
+            - dsa_net
+
+    # One-shot provisioning container — creates the admin user and enables
+    # the HistomicsUI plugin on first run, then exits.
+    provision:
+        image: dsarchive/dsa_common:latest
+        restart: "no"
+        entrypoint: ["python3", "/provision.py"]
+        environment:
+            <<: *dsa-env
+        volumes:
+            - ./provision.py:/provision.py:ro
+        depends_on:
+            girder:
+                condition: service_healthy
+        networks:
+            - dsa_net
+
+# ── Volumes & networks ────────────────────────────────────────────────────────
+volumes:
+    mongodb_data:
+    dsa_assetstore:
+
+networks:
+    dsa_net:
+        driver: bridge

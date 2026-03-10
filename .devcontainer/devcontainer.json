@@ -1,0 +1,72 @@
+{
+    "name": "DSA Sandbox (Python · C/C++ · Docker)",
+
+    // Build the custom image defined in ./Dockerfile
+    "build": {
+        "dockerfile": "Dockerfile",
+        "context": ".."
+    },
+
+    // Mount the host Docker socket so `docker` / `docker compose` commands
+    // inside the container manage sibling containers on the host daemon.
+    "mounts": [
+        "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind",
+        "source=devcontainer-bashhistory,target=/commandhistory,type=volume"
+    ],
+
+    // Run as the non-root user defined in the Dockerfile
+    "remoteUser": "vscode",
+
+    // Forward port 8080 so HistomicsUI is reachable at http://localhost:8080
+    // from the developer's browser on the host.
+    "forwardPorts": [8080],
+    "portsAttributes": {
+        "8080": {
+            "label": "HistomicsUI",
+            "onAutoForward": "notify"
+        }
+    },
+
+    // ── VS Code extensions ────────────────────────────────────────────────────
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                // Python
+                "ms-python.python",
+                "ms-python.black-formatter",
+                "ms-python.pylint",
+                "ms-toolsai.jupyter",
+                // C / C++
+                "ms-vscode.cpptools",
+                "ms-vscode.cmake-tools",
+                "llvm-vs-code-extensions.vscode-clangd",
+                // Docker
+                "ms-azuretools.vscode-docker",
+                // REST / HTTP
+                "humao.rest-client",
+                // General quality-of-life
+                "editorconfig.editorconfig",
+                "github.copilot",
+                "eamodio.gitlens"
+            ],
+            "settings": {
+                // Python
+                "python.defaultInterpreterPath": "/usr/bin/python3",
+                "editor.formatOnSave": true,
+                "[python]": {
+                    "editor.defaultFormatter": "ms-python.black-formatter"
+                },
+                // C++
+                "C_Cpp.default.cppStandard": "c++17",
+                "C_Cpp.default.cStandard": "c17",
+                "C_Cpp.default.intelliSenseMode": "linux-clang-x64",
+                // Terminal
+                "terminal.integrated.defaultProfile.linux": "bash"
+            }
+        }
+    },
+
+    // Install Python packages and make helper scripts executable after the
+    // container is first created.
+    "postCreateCommand": "bash -c 'chmod +x /workspace/scripts/*.sh 2>/dev/null; echo \"✅ Dev container ready. Run ./scripts/start_dsa.sh to start HistomicsUI.\"'"
+}
